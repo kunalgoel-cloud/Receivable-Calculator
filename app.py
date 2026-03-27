@@ -13,18 +13,11 @@ POS_DELAY = {
 }
 
 def reconcile_payments(invoice_df, summary_df):
-    """
-    Allocates the Ledger Balance (from Summary) to individual invoices
-    using First-In, First-Out (FIFO) logic.
-    """
     reconciled_rows = []
     unique_customers = invoice_df['Customer Name'].unique()
     
     for customer in unique_customers:
-        # Get customer's invoices sorted by date (oldest first)
         cust_invs = invoice_df[invoice_df['Customer Name'] == customer].sort_values('Invoice Date')
-        
-        # Get actual ledger balance (ground truth)
         ledger_bal = summary_df.loc[summary_df['customer_name'] == customer, 'closing_balance'].sum()
         
         remaining_bal = ledger_bal
@@ -44,7 +37,7 @@ def reconcile_payments(invoice_df, summary_df):
 # --- UI HEADER ---
 st.title("🛡️ B2B Reconciled Aging Dashboard")
 current_date = date.today()
-st.markdown(f"**Calculation Basis:** System Date ({current_date.strftime('%d-%m-%Y')}) | **Format:** Day-Month-Year")
+st.markdown(f"**Calculation Basis:** System Date ({current_date.strftime('%d-%m-%Y')}) | **Format:** DD/MM/YY")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -54,7 +47,6 @@ with st.sidebar:
     
     st.divider()
     st.header("2. Settings")
-    # Using ddmmyy logic for parsing
     credit_days = st.number_input("Standard Credit Days", value=30)
     
     st.divider()
@@ -62,12 +54,10 @@ with st.sidebar:
     search_query = st.text_input("🔍 Search Invoice Number")
 
 if inv_file and sum_file:
-    # Read files
     df_raw = pd.read_csv(inv_file)
     df_sum = pd.read_csv(sum_file)
     
-    # 1. CONSOLIDATION (Group multi-item invoices into one row)
-    # We sum the 'Balance' to get the total invoice debt
+    # 1. CONSOLIDATION
     df_inv = df_raw.groupby('Invoice Number').agg({
         'Invoice Date': 'first',
         'Customer Name': 'first',
@@ -80,7 +70,7 @@ if inv_file and sum_file:
     # 2. FILTER & DATE PARSING (DD/MM/YY)
     df_inv = df_inv[df_inv['GST Treatment'] == 'business_gst'].copy()
     
-    # Strictly parse dd/mm/yy format
+    # Explicitly parsing DD/MM/YY based on your file
     df_inv['Invoice Date'] = pd.to_datetime(df_inv['Invoice Date'], format='%d/%m/%y', dayfirst=True, errors='coerce')
     df_inv = df_inv.dropna(subset=['Invoice Date'])
     
@@ -96,7 +86,7 @@ if inv_file and sum_file:
     today_ts = pd.Timestamp(current_date)
     df_reconciled['Aging Days'] = (today_ts - df_reconciled['True Due Date']).dt.days
     
-    # --- DYNAMIC MULTI-SELECT FILTERS ---
+    # --- DYNAMIC FILTERS ---
     all_custs = sorted(df_reconciled['Customer Name'].unique().tolist())
     selected_custs = st.sidebar.multiselect("Filter Customers", options=all_custs)
     
@@ -110,12 +100,12 @@ if inv_file and sum_file:
     if selected_custs:
         display_df = display_df[display_df['Customer Name'].isin(selected_custs)]
     if selected_stats:
-        display_df = display_df[display_df['Invoice Status'].isin(selected_statuses)]
+        # FIXED: Variable name now matches 'selected_stats'
+        display_df = display_df[display_df['Invoice Status'].isin(selected_stats)]
 
     # --- KPI METRICS ---
     m1, m2, m3 = st.columns(3)
     
-    # Context-aware Ledger Balance
     rel_custs = display_df['Customer Name'].unique()
     total_ledger = df_sum[df_sum['customer_name'].isin(rel_custs)]['closing_balance'].sum()
     m1.metric("Ledger Balance (Context)", f"₹{total_ledger:,.2f}")
@@ -131,10 +121,8 @@ if inv_file and sum_file:
     st.subheader(f"Detailed Aging Report ({len(display_df)} Invoices)")
     
     def highlight_aging(row):
-        # Red row if overdue and unpaid
         if row['Effective Balance'] > 0 and row['Aging Days'] > 0:
             return ['background-color: #ffe6e6'] * len(row)
-        # Grey text if invoice is mathematically "paid" via Ledger Balance
         elif row['Effective Balance'] <= 0:
             return ['color: #b0b0b0'] * len(row)
         return [''] * len(row)
@@ -163,4 +151,4 @@ if inv_file and sum_file:
     st.bar_chart(chart_data)
 
 else:
-    st.info("💡 Please upload both files to view the B2B aging analysis.")
+    st.info("💡 Please upload your CSV files to view the B2B aging analysis.")
