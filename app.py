@@ -53,7 +53,7 @@ if inv_file and sum_file:
     df_raw = pd.read_csv(inv_file)
     df_sum = pd.read_csv(sum_file)
     
-    # 1. CONSOLIDATE DUPLICATE INVOICE ROWS
+    # 1. CONSOLIDATE DUPLICATE INVOICE ROWS (Group by Invoice Number)
     df_inv = df_raw.groupby('Invoice Number').agg({
         'Invoice Date': 'first',
         'Customer Name': 'first',
@@ -90,9 +90,9 @@ if inv_file and sum_file:
     all_customers = sorted(df_reconciled['Customer Name'].unique().tolist())
     selected_custs = st.sidebar.multiselect("Filter by Customer(s)", options=all_customers)
     
-    # Status Filter
-    statuses = ["All Statuses"] + sorted(df_reconciled['Invoice Status'].unique().tolist())
-    selected_status = st.sidebar.selectbox("Filter by Status", statuses)
+    # Multiple Status Filter (Updated to Multiselect)
+    all_statuses = sorted(df_reconciled['Invoice Status'].unique().tolist())
+    selected_statuses = st.sidebar.multiselect("Filter by Status(es)", options=all_statuses)
 
     # --- APPLY FILTERS ---
     display_df = df_reconciled.copy()
@@ -103,14 +103,13 @@ if inv_file and sum_file:
     if selected_custs:
         display_df = display_df[display_df['Customer Name'].isin(selected_custs)]
         
-    if selected_status != "All Statuses":
-        display_df = display_df[display_df['Invoice Status'] == selected_status]
+    if selected_statuses:
+        display_df = display_df[display_df['Invoice Status'].isin(selected_statuses)]
 
     # --- METRICS ---
     m1, m2, m3 = st.columns(3)
     
     # Calculate Ledger Balance for selected context
-    # If a search is active, we show balance for the customers in the search result
     relevant_customers = display_df['Customer Name'].unique()
     total_ledger = df_sum[df_sum['customer_name'].isin(relevant_customers)]['closing_balance'].sum()
     
@@ -124,13 +123,13 @@ if inv_file and sum_file:
     m3.metric("Avg. Aging Days", f"{int(avg_age)} Days")
 
     # --- TABLE VIEW ---
-    st.subheader(f"Invoice Aging Table ({len(display_df)} Invoices)")
+    st.subheader(f"Invoice Aging Table ({len(display_df)} Invoices Shown)")
     
     def style_rows(row):
         if row['Effective Balance'] > 0 and row['Aging Days'] > 0:
-            return ['background-color: #ffe6e6'] * len(row)
+            return ['background-color: #ffe6e6'] * len(row) # Light Red for Overdue
         elif row['Effective Balance'] <= 0:
-            return ['color: #999999'] * len(row)
+            return ['color: #999999'] * len(row) # Grey for Paid/Adjusted
         return [''] * len(row)
 
     final_cols = [
