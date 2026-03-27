@@ -69,8 +69,6 @@ if inv_file and sum_file:
 
     # 2. FILTER & DATE PARSING (DD/MM/YY)
     df_inv = df_inv[df_inv['GST Treatment'] == 'business_gst'].copy()
-    
-    # Explicitly parsing DD/MM/YY based on your file
     df_inv['Invoice Date'] = pd.to_datetime(df_inv['Invoice Date'], format='%d/%m/%y', dayfirst=True, errors='coerce')
     df_inv = df_inv.dropna(subset=['Invoice Date'])
     
@@ -100,25 +98,54 @@ if inv_file and sum_file:
     if selected_custs:
         display_df = display_df[display_df['Customer Name'].isin(selected_custs)]
     if selected_stats:
-        # FIXED: Variable name now matches 'selected_stats'
         display_df = display_df[display_df['Invoice Status'].isin(selected_stats)]
 
     # --- KPI METRICS ---
     m1, m2, m3 = st.columns(3)
-    
     rel_custs = display_df['Customer Name'].unique()
     total_ledger = df_sum[df_sum['customer_name'].isin(rel_custs)]['closing_balance'].sum()
-    m1.metric("Ledger Balance (Context)", f"₹{total_ledger:,.2f}")
+    m1.metric("Total Ledger Balance", f"₹{total_ledger:,.2f}")
     
     overdue_mask = (display_df['Effective Balance'] > 0) & (display_df['Aging Days'] > 0)
     overdue_amt = display_df[overdue_mask]['Effective Balance'].sum()
-    m2.metric("Overdue Amount", f"₹{overdue_amt:,.2f}")
+    m2.metric("Total Overdue Amount", f"₹{overdue_amt:,.2f}")
     
     avg_age = display_df[overdue_mask]['Aging Days'].mean() if not display_df[overdue_mask].empty else 0
     m3.metric("Avg. Aging Days", f"{int(avg_age)}")
 
-    # --- RESULTS TABLE ---
-    st.subheader(f"Detailed Aging Report ({len(display_df)} Invoices)")
+    # --- NEW: CUSTOMER SUMMARY TABLE ---
+    st.subheader("📊 Customer-wise Summary")
+    
+    # Aggregate data for the summary table
+    summary_data = []
+    for cust in rel_custs:
+        c_df = display_df[display_df['Customer Name'] == cust]
+        c_ledger = df_sum.loc[df_sum['customer_name'] == cust, 'closing_balance'].sum()
+        c_overdue_mask = (c_df['Effective Balance'] > 0) & (c_df['Aging Days'] > 0)
+        c_overdue_amt = c_df[c_overdue_mask]['Effective Balance'].sum()
+        c_avg_age = c_df[c_overdue_mask]['Aging Days'].mean() if not c_df[c_overdue_mask].empty else 0
+        
+        summary_data.append({
+            "Customer Name": cust,
+            "Total Ledger Balance": c_ledger,
+            "Overdue Amount": c_overdue_amt,
+            "Avg. Aging (Days)": int(c_avg_age)
+        })
+    
+    df_cust_summary = pd.DataFrame(summary_data).sort_values("Overdue Amount", ascending=False)
+    st.dataframe(
+        df_cust_summary.style.format({
+            "Total Ledger Balance": "₹{:.2f}",
+            "Overdue Amount": "₹{:.2f}",
+            "Avg. Aging (Days)": "{:,.0f}"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --- DETAILED TABLE VIEW ---
+    st.divider()
+    st.subheader(f"📑 Detailed Invoice Aging ({len(display_df)} Invoices)")
     
     def highlight_aging(row):
         if row['Effective Balance'] > 0 and row['Aging Days'] > 0:
@@ -127,10 +154,7 @@ if inv_file and sum_file:
             return ['color: #b0b0b0'] * len(row)
         return [''] * len(row)
 
-    final_cols = [
-        'Invoice Number', 'Customer Name', 'Invoice Status', 'Invoice Date', 
-        'GRN Date', 'True Due Date', 'Balance', 'Effective Balance', 'Aging Days'
-    ]
+    final_cols = ['Invoice Number', 'Customer Name', 'Invoice Status', 'Invoice Date', 'GRN Date', 'True Due Date', 'Balance', 'Effective Balance', 'Aging Days']
     
     st.dataframe(
         display_df[final_cols].style.apply(highlight_aging, axis=1)
@@ -139,14 +163,25 @@ if inv_file and sum_file:
             "Invoice Date": "{:%d-%m-%Y}", "GRN Date": "{:%d-%m-%Y}",
             "True Due Date": "{:%d-%m-%Y}", "Aging Days": "{:,.0f}"
         }),
-        use_container_width=True
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --- EXPORT FEATURE ---
+    st.sidebar.divider()
+    csv_data = display_df[final_cols].to_csv(index=False).encode('utf-8')
+    st.sidebar.download_button(
+        label="📥 Download Detailed Report",
+        data=csv_data,
+        file_name=f"Reconciled_Aging_{current_date}.csv",
+        mime="text/csv",
     )
 
     # --- AGING CHART ---
     st.subheader("Overdue Concentration")
     bins = [-999, 0, 15, 30, 60, 9999]
     labels = ['Current', '1-15 Days', '16-30 Days', '31-60 Days', '>60 Days']
-    display_df['Bucket'] = pd.cut(display_df['Aging Days'], bins=bins, labels=labels)
+    display_df['Bucket'] = pd.cut(display_df['Aging Days'], bins=bins, labels=labels, right=True)
     chart_data = display_df[display_df['Effective Balance'] > 0].groupby('Bucket')['Effective Balance'].sum().reindex(labels)
     st.bar_chart(chart_data)
 
